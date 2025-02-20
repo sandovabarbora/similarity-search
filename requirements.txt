@@ -1,0 +1,50 @@
+# Core API
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+pydantic-settings
+
+# Frontend
+streamlit
+requests
+pillow
+
+# Database
+SQLAlchemy
+psycopg2-binary
+alembic
+
+# ML and Image Processing
+torch
+torchvision
+numpy
+scikit-learn
+faiss-cpu
+h5py
+
+# Testing and Development
+pytest
+pytest-asyncio
+httpx
+pytest-cov
+black
+isort
+flake8
+pylint
+
+# Type Checking
+mypy
+types-Pillow
+types-tqdm
+types-requests
+
+# Utilities
+python-dotenv
+tqdm
+pandas
+colorama
+
+# Logging
+structlog
+python-json-logger
