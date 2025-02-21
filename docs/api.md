@@ -23,7 +23,6 @@ This script implements a FastAPI application that provides an image similarity s
 
 - **FastAPI & Uvicorn:** Web framework and ASGI server.
 - **h5py & numpy:** For loading and processing pre-computed feature data.
-- **Pillow:** For image processing.
 - **Custom modules:**  
   - `utils.logger` for logging.
   - `processing.feature_extractor` for feature extraction and similarity computation.
@@ -32,7 +31,7 @@ This script implements a FastAPI application that provides an image similarity s
 ## File Details
 
 - **Feature Loading:**  
-  At startup, the script loads feature vectors and image paths from an HDF5 file located at `data/processed/features.h5`.
+  At startup, the script loads feature vectors and image paths from desired HDF5 file located at `models/`.
 
 - **Search Process:**  
   When an image is uploaded via the `/search` endpoint, the script:
@@ -41,6 +40,7 @@ This script implements a FastAPI application that provides an image similarity s
   3. Extracts its features.
   4. Computes similarity with the pre-loaded features.
   5. Returns a list of similar images, including their file paths, similarity scores, and rank order.
+
 
 - **Error Handling:**  
   HTTP exceptions are raised for invalid file types or if an error occurs during processing. Detailed logging is used to track and diagnose issues.
@@ -53,5 +53,5 @@ To run the API, execute the script directly:
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Make sure all dependencies are installed from the requirements file and HDF5 file is present.
+Make sure all dependencies are installed from the requirements file and HDF5 file is existent.
 

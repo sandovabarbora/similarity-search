@@ -31,7 +31,7 @@ feature_extractor = FeatureExtractor()
 def load_features():
     try:
         logger.info("Loading pre-computed features")
-        with h5py.File('data/processed/features.h5', 'r') as f:
+        with h5py.File('models/features.h5', 'r') as f:
             features = f['features'][:]
             image_paths = [path.decode('utf-8') for path in f['image_paths'][:]]
         logger.info(f"Loaded {len(features)} feature vectors")
