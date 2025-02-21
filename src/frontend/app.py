@@ -69,8 +69,8 @@ def main():
             st.subheader("Uploaded Image")
             # Display uploaded image
             image = Image.open(uploaded_file)
-            st.image(image, use_column_width=True)
-            
+            st.image(image, use_container_width=True)   
+
             # Search button
             if st.button("🔍 Find Similar Images", type="primary"):
                 with st.spinner("Searching for similar images..."):
@@ -94,7 +94,7 @@ def main():
                                             st.image(
                                                 img,
                                                 caption=f"Similarity: {img_data['similarity_score']:.2%}",
-                                                use_column_width=True
+                                                use_container_width=True
                                             )
                                     except Exception as e:
                                         st.error(f"Error loading image: {img_path}")

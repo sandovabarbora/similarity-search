@@ -11,6 +11,12 @@ import numpy as np
 from PIL import Image
 import io
 
+from pathlib import Path
+import sys
+# Add just the src directory to Python path
+src_dir = str(Path(__file__).parent.parent)
+sys.path.append(src_dir)
+
 from utils.logger import logger, Logger
 from processing.feature_extractor import FeatureExtractor
 from utils.log_decorators import log_function_call
@@ -25,7 +31,7 @@ feature_extractor = FeatureExtractor()
 def load_features():
     try:
         logger.info("Loading pre-computed features")
-        with h5py.File('data/flickr30k_features.h5', 'r') as f:
+        with h5py.File('data/processed/features.h5', 'r') as f:
             features = f['features'][:]
             image_paths = [path.decode('utf-8') for path in f['image_paths'][:]]
         logger.info(f"Loaded {len(features)} feature vectors")
@@ -110,11 +116,10 @@ async def search_similar(file: UploadFile = File(...)):
         query_features = feature_extractor.extract_features(image)
         
         # Find similar images
-        top_k = 9  # Return top 9 similar images
         indices, scores = feature_extractor.compute_similarity(
-            query_features, 
-            features, 
-            top_k=top_k
+            query_features,
+            features,
+            9  # Pass top_k as a positional argument instead
         )
         
         # Prepare results
@@ -161,7 +166,28 @@ async def get_stats():
             detail="Error retrieving statistics"
         )
 
+@app.get("/images")
+async def get_images(page: int = 0, limit: int = 20):
+    """Get paginated images from the database"""
+    try:
+        start_idx = page * limit
+        end_idx = start_idx + limit
+        
+        return {
+            "status": "success",
+            "total": len(image_paths),
+            "images": image_paths[start_idx:end_idx],
+            "page": page,
+            "limit": limit
+        }
+    except Exception as e:
+        logger.exception(f"Error getting images: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Error retrieving images"
+        )
+
 if __name__ == "__main__":
     import uvicorn
     logger.info("Starting STRV Similarity Search API")
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
