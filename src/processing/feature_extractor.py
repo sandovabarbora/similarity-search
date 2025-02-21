@@ -9,7 +9,7 @@ from pathlib import Path
 from utils.logger import logger, Logger
 from utils.log_decorators import log_class_methods
 
-@log_class_methods
+
 class FeatureExtractor:
     def __init__(self):
         logger.info("Initializing FeatureExtractor")

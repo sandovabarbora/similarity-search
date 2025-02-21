@@ -1,4 +1,4 @@
-data/raw/*
+data/*
 .env
 env/
 *.pyc
