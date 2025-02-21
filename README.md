@@ -28,43 +28,82 @@ The system consists of three main components:
 
 ## Setup and Installation
 
+# STRV Similarity Search
+
+## Project Setup and Environment Management
+
 ### Prerequisites
 - Python 3.9+
 - Make (for using Makefile commands)
-- Flickr30k dataset
 
-### Environment Setup
+### Environment Management
+
+#### Quick Start
 ```bash
 # Clone the repository
 git clone https://github.com/sandovabarbora/strv-similarity-search
 cd strv-similarity-search
 
-# Create virtual environment and install dependencies
+# Set up the entire environment (creates virtual env and installs dependencies)
 make setup
 
-# Activate virtual environment but should be handled by Makefile
-# On Unix/Linux/MacOS:
+# Install dependencies (if environment is already activated)
+make install
+```
+
+### Available Make Commands
+
+#### Environment Commands
+- `make setup`: 
+  - Creates a virtual environment if it doesn't exist
+  - Upgrades pip
+  - Prepares the development environment
+
+- `make install`: 
+  - Installs project dependencies
+  - Must be run within an activated virtual environment
+
+- `make activate`: 
+  - Provides instructions for manually activating the virtual environment
+  
+- `make clean`: 
+  - Removes the entire virtual environment
+
+
+### Virtual Environment Activation
+
+#### Unix/Linux/macOS
+```bash
 source env/bin/activate
-# On Windows:
-.\env\Scripts\activate
 ```
 
-### Data Processing
-Process the Flickr30k dataset to extract features:
-```bash
-#FLICKR_DIR by default in data/raw/flickr30k_images
-make process-data FLICKR_DIR=/path/to/flickr30k
+#### Windows
+```cmd
+# CMD
+call env\Scripts\activate.bat
+
+# PowerShell
+.\env\Scripts\Activate.ps1
 ```
 
-### Running the Application
-```bash
-# Run both API and frontend
-make run-all
+### Troubleshooting
 
-# Or run them separately
-make run-api
-make run-frontend
-```
+#### Common Setup Issues
+1. **Python Version**: Ensure Python 3.9+ is installed
+2. **Make Availability**: 
+   - On Windows, install Make via Windows Subsystem for Linux or MinGW
+   - On macOS, install via Homebrew: `brew install make`
+   - On Linux, use package manager (e.g., `apt-get install make`)
+
+3. **Virtual Environment**:
+   - If activation fails, verify Python installation
+   - Check that you're in the correct project directory
+   - Ensure no conflicting Python environments are active
+
+### Notes
+- Always run `make` commands from the project root directory
+- To exit the virtual environment, use the `deactivate` command
+- For detailed project setup, refer to the full documentation in this README
 
 ## Components
 
@@ -125,6 +164,8 @@ strv-similarity-search/
 ├── data/
 │   └── raw/
 │       └── flickr30k_images/
+│   └── processed/
+│   └── uploads/
 ├── src/
 │   ├── api/
 │   ├── frontend/
@@ -132,30 +173,11 @@ strv-similarity-search/
 │   ├── scripts/
 │   ├── storage/
 │   └── utils/
+│── models/
 ├── tests/
 ├── Makefile
 └── requirements.txt
 ```
-
-### Available Make Commands
-```bash
-make help          # Show available commands
-make setup         # Set up environment
-make dev-setup    # Set up development environment
-make clean        # Clean up project files
-make lint         # Run linting
-make test         # Run tests
-make format       # Format code
-make run-all      # Run full application
-make check-logs   # Monitor logs
-```
-
-### Adding New Features
-1. Create feature branch
-2. Implement changes
-3. Add tests
-4. Run formatting and linting
-5. Submit pull request
 
 ## API Reference
 
@@ -215,11 +237,6 @@ Response:
    - Solution: Check ports are available
    - Verify API is running
 
-### Logging
-Monitor application logs:
-```bash
-make check-logs
-```
 
 ## Additional Resources
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
