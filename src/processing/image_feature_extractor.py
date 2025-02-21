@@ -5,12 +5,17 @@ from PIL import Image
 from typing import List, Union, Tuple
 import numpy as np
 from pathlib import Path
+import sys
 
-from utils.logger import logger, Logger
-from utils.log_decorators import log_class_methods
+# Add project root to Python path
+project_root = str(Path(__file__).parent.parent.parent)
+sys.path.append(project_root)
+
+from src.utils.logger import logger, Logger
+from src.utils.log_decorators import log_class_methods
 
 
-class FeatureExtractor:
+class ImageFeatureExtractor:
     def __init__(self):
         logger.info("Initializing FeatureExtractor")
         try:
