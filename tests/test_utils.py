@@ -1,20 +1,20 @@
-import os
-import pytest
-import tempfile
-from unittest.mock import patch, MagicMock
 import logging
+import os
 import sys
+import tempfile
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import the utilities to test - adjust paths as needed
 try:
-    from src.utils.logger import Logger, logger
-    from src.utils.log_decorators import log_function_call, log_class_methods
-    
     # Test the path validation function
     from src.api.main import ensure_valid_path
+    from src.utils.log_decorators import log_class_methods, log_function_call
+    from src.utils.logger import Logger, logger
 except ImportError:
     # Create mocks if modules don't exist
     class Logger:
@@ -40,6 +40,7 @@ except ImportError:
 
 # Test the path validation function from main
 from src.api.main import ensure_valid_path
+
 
 # Fixtures
 @pytest.fixture

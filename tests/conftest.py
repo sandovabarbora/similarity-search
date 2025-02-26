@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 import torch
 
+
 # Add project root to Python path
 @pytest.fixture(scope="session", autouse=True)
 def setup_python_path():
@@ -77,7 +78,7 @@ def mock_torch_environment():
     Allows explicit control over device availability.
     """
     import unittest.mock as mock
-    
+
     # Determine the best available device
     def determine_best_device():
         if torch.cuda.is_available():

@@ -1,16 +1,18 @@
 import os
-import pytest
+import sys
+from unittest.mock import MagicMock, patch
+
 import numpy as np
+import pytest
 import torch
 from PIL import Image
-from unittest.mock import patch, MagicMock
-import sys
 
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import the component to test
 from src.processing.image_feature_extractor import ImageFeatureExtractor
+
 
 # Fixtures
 @pytest.fixture
