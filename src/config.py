@@ -4,12 +4,6 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # Database
-    DATABASE_URL: str = "postgresql://user:password@localhost:5432/similarity_search"
-
-    # Redis
-    REDIS_URL: str = "redis://localhost:6379"
-
     # Storage
     UPLOAD_FOLDER: str = "data/uploads"
     VECTOR_DIMENSION: int = 512  # Feature vector dimension

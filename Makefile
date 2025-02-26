@@ -96,6 +96,17 @@ process-images-append:
 	@echo "Processing images..."
 	@env/bin/python src/scripts/process_images.py --input_dir data/raw/images --output_file models/features.h5 --batch_size 32 --append
 
+# Docker targets
+docker-build:
+	docker build -t strv-similarity-search .
+
+docker-run-api:
+	docker run -p 8000:8000 strv-similarity-search
+
+docker-run-streamlit:
+	docker run -p 8501:8501 strv-similarity-search make run-streamlit
+
+
 ########################################################################################
 
 test:

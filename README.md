@@ -24,6 +24,7 @@ STRV Similarity Search is a visual intelligence platform that uses deep learning
 ### Prerequisites
 - Python 3.9+
 - pip (package installer) 
+- Docker (for running with containers)
 
 ### Environment Setup
 ```bash
@@ -36,13 +37,21 @@ make setup
 
 # Activate the virtual environment
 make activate
+```
+The script shall provide manual command to activate the virtual environment in case it doesn't activate.
 
+```bash
 # Install dependencies
 make install
 ```
 
-#### Note:
-If the `make activate` does not work, activate the enviroment manually, the `make setup` should provide suitable commands.
+### Download Test Images
+
+To test the MVP, you can download the Flickr image dataset from Kaggle: 
+[Flickr Image Dataset](https://www.kaggle.com/datasets/hsankesara/flickr-image-dataset)
+
+1. Download the dataset from Kaggle
+2. Extract the images to the `data/raw/images` directory in the project
 
 ### Feature Database Preparation
 Before running the application, you need to process images to create the feature database:
@@ -64,12 +73,33 @@ This will:
 
 ## Running the Application
 
-### Starting the Backend API
+### Running with Docker
+
+1. Build the Docker image:
+   ```bash
+   make docker-build
+   ```
+
+2. Run the API container:
+   ```bash
+   make docker-run-api
+   ```
+
+3. In a separate terminal, run the Streamlit container:
+   ```bash
+   make docker-run-streamlit
+   ```
+
+4. Access the web interface at `http://localhost:8501`
+
+### Running without Docker
+
+#### Starting the Backend API
 ```bash
 make run-api
 ```
 
-### Starting the Frontend
+#### Starting the Frontend
 ```bash  
 make run-streamlit
 ```
@@ -121,3 +151,5 @@ The project includes a Makefile with helpful commands for development and testin
 3. Expand search capabilities with text and metadata search
 4. Include image clustering and tag recommendations
 5. Extend to video similarity search
+6. Implement recommendation engine
+7. Implement MLOps infrastructure and pipelines
