@@ -1,0 +1,21 @@
+[flake8]
+exclude = 
+    .git,
+    __pycache__,
+    build,
+    dist,
+    env,
+    venv,
+    .env,
+    .venv
+
+max-line-length = 100
+max-complexity = 10
+statistics = True
+show-source = True
+
+# Ignore specific errors/warnings:
+# E203: Whitespace before ':' (conflicts with black)
+# W503: Line break before binary operator (conflicts with black)
+# E501: Line too long (handled by max-line-length)
+ignore = E203, W503, E501

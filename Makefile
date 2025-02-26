@@ -1,49 +1,99 @@
 SHELL := /bin/bash
 
-# Choose python3 on Unix, python on Windows
+# Detect operating system
 ifeq ($(OS),Windows_NT)
     PYTHON := python
+    VENV_ACTIVATE := env\Scripts\activate.bat
+    PIP := pip
 else
     PYTHON := python3
+    VENV_ACTIVATE := source env/bin/activate
+    PIP := pip3
 endif
 
-.PHONY: help setup install activate shell clean
+# Phony targets
+.PHONY: help setup install activate test test-coverage lint format clean
 
+# Default target
 help:
+	@echo "Similarity Search Project Makefile"
+	@echo "======================================"
 	@echo "Available commands:"
-	@echo "  make setup    - Create (if needed) the virtual environment and upgrade pip"
-	@echo "  make install  - Install dependencies (must be run within an activated environment, or use 'make setup' first)"
-	@echo "  make activate - Print instructions for manually activating the virtual environment"
-	@echo "  make clean    - Remove the virtual environment"
+	@echo "  make setup     - Create virtual environment"
+	@echo "  make install   - Install project dependencies"
+	@echo "  make activate  - Show environment activation instructions"
+	@echo "  make test      - Run all tests"
+	@echo "  make test-coverage - Run tests with coverage report"
+	@echo "  make lint      - Run code quality checks"
+	@echo "  make format    - Format code with black"
+	@echo "  make clean     - Remove virtual environment"
 
+# Create virtual environment
 setup:
-	@echo "Setting up environment..."
+	@echo "Creating virtual environment..."
 	@if [ ! -d env ]; then \
-	    echo "No virtual environment found. Creating 'env'..."; \
-	    $(PYTHON) -m venv env; \
+		$(PYTHON) -m venv env; \
 	fi
-	@env/bin/pip install --upgrade pip
-	@echo "Setup complete!"
-	@echo "=============================================================================="
-	@echo "To activate your virtual environment manually, run one of the following:"
-ifeq ($(OS),Windows_NT)
-	@echo "  call env\\Scripts\\activate.bat   (Windows CMD)"
-	@echo "  or .\\env\\Scripts\\Activate.ps1  (Windows PowerShell)"
-else
-	@echo "  source env/bin/activate           (Unix/Linux/macOS)"
-endif
-	@echo "Then run 'make install' to install dependencies."
-	@echo "To deactivate the environment, run 'deactivate'."
-	@echo "To remove the environment, run 'make clean'."
-	@echo "In case of any issues, refer to the 'make help' or README.md."
-	@echo "=============================================================================="
+	@( \
+		. env/bin/activate; \
+		$(PIP) install --upgrade pip; \
+	)
+	@echo "Virtual environment created successfully."
+	@echo "Activate with: source env/bin/activate"
 
+# Install dependencies
 install:
-	@echo "Installing dependencies..."
-	@env/bin/pip install -r requirements.txt
-	@echo "Dependencies installed!"	
+	@( \
+		. env/bin/activate; \
+		$(PIP) install -r requirements.txt; \
+		$(PIP) install pytest pytest-cov flake8 black isort autoflake; \
+	)
+	@echo "Dependencies installed successfully."
 
+# Show activation instructions
+activate:
+	@echo "To activate the virtual environment:"
+	@echo "  source env/bin/activate  (Unix/Linux/macOS)"
+	@echo "  env\Scripts\activate     (Windows)"
+
+# Run tests
+test:
+	@( \
+		. env/bin/activate; \
+		PYTHONPATH=. pytest tests/ -v -x --tb=short; \
+	)
+
+# Run tests with coverage
+test-coverage:
+	@( \
+		. env/bin/activate; \
+		PYTHONPATH=. pytest --cov=src tests/ \
+		--cov-report=term-missing \
+		--cov-report=html; \
+	)
+
+# Run linters
+lint:
+	@( \
+		. env/bin/activate; \
+		flake8 src/ tests/; \
+		black --check src/ tests/; \
+		isort --check src/ tests/; \
+	)
+
+# Format code
+format:
+	@( \
+		. env/bin/activate; \
+		black src/ tests/; \
+		isort src/ tests/; \
+	)
+
+# Clean virtual environment
 clean:
 	@echo "Removing virtual environment..."
-	@if [ -d env ]; then rm -rf env; fi
-	@echo "Environment removed."
+	@rm -rf env
+	@echo "Virtual environment removed."
+
+# Full check (lint and test)
+check: lint test

@@ -1,323 +1,357 @@
-# Enhanced Storage Architecture for Social Media Platform
+# STRV Similarity Search: Production Deployment Guide
 
-## 1. Vector Database Implementation (Milvus)
+This guide provides detailed instructions for deploying STRV Similarity Search in a production environment, including hardware requirements, performance optimization, and scaling strategies.
 
-### Installation and Setup
+## Hardware Requirements
+
+### Minimum Requirements
+- **CPU**: 4+ cores (8+ recommended)
+- **RAM**: 16GB minimum (32GB+ recommended)
+- **Storage**: 100GB SSD (faster storage improves search performance)
+- **Network**: 100Mbps minimum
+
+### Recommended Configuration for Large Datasets
+- **CPU**: 16+ cores
+- **RAM**: 64GB+
+- **GPU**: NVIDIA with 8GB+ VRAM for feature extraction
+- **Storage**: 500GB+ NVMe SSD
+- **Network**: 1Gbps+
+
+## Deployment Options
+
+### Docker Deployment (Recommended)
+
+A Docker-based deployment provides the most consistent experience across environments.
+
+#### Docker Compose Setup
+
 ```yaml
-# docker-compose.yml
-version: '3.5'
+version: '3'
 
 services:
-  etcd:
-    container_name: milvus-etcd
-    image: quay.io/coreos/etcd:v3.5.5
-    environment:
-      - ETCD_AUTO_COMPACTION_MODE=revision
-      - ETCD_AUTO_COMPACTION_RETENTION=1000
-      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
     volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/etcd:/etcd
-    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
-
-  minio:
-    container_name: milvus-minio
-    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+      - ./models:/app/models
+      - ./logs:/app/logs
     environment:
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-    volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/minio:/minio_data
-    command: minio server /minio_data
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - NUM_WORKERS=4
+      - VECTOR_DIMENSION=2048
+    restart: always
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
-      timeout: 20s
+      timeout: 10s
       retries: 3
 
-  standalone:
-    container_name: milvus-standalone
-    image: milvusdb/milvus:v2.3.3
-    command: ["milvus", "run", "standalone"]
-    environment:
-      ETCD_ENDPOINTS: etcd:2379
-      MINIO_ADDRESS: minio:9000
-    volumes:
-      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
     ports:
-      - "19530:19530"
-      - "9091:9091"
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
     depends_on:
-      - "etcd"
-      - "minio"
+      - api
+    restart: always
 ```
 
-### Python Implementation
-```python
-from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType
-import numpy as np
+#### Dockerfiles
 
-# Connect to Milvus
-connections.connect(host='localhost', port='19530')
+**Dockerfile.api**:
+```dockerfile
+FROM python:3.9-slim
 
-# Define collection schema
-dim = 512  # ResNet50 feature dimension
-collection_name = "image_features"
+WORKDIR /app
 
-fields = [
-    FieldSchema(name="id", dtype=DataType.INT64, is_primary=True),
-    FieldSchema(name="image_path", dtype=DataType.VARCHAR, max_length=500),
-    FieldSchema(name="feature_vector", dtype=DataType.FLOAT_VECTOR, dim=dim)
-]
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-schema = CollectionSchema(fields=fields, description="Image feature vectors")
-collection = Collection(name=collection_name, schema=schema)
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Create IVF_SQ8 index for fast retrieval
-index_params = {
-    "metric_type": "L2",
-    "index_type": "IVF_SQ8",
-    "params": {"nlist": 1024}
-}
-collection.create_index(field_name="feature_vector", index_params=index_params)
+# Optional: Install FAISS for faster search
+RUN pip install --no-cache-dir faiss-cpu
+
+# Copy application code
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/models
+
+# Run the API server
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
 ```
 
-## 2. Cassandra Implementation for Metadata
+**Dockerfile.frontend**:
+```dockerfile
+FROM python:3.9-slim
 
-### Setup
-```yaml
-# docker-compose.cassandra.yml
-version: '3'
+WORKDIR /app
 
-services:
-  cassandra:
-    image: cassandra:latest
-    ports:
-      - "9042:9042"
-    volumes:
-      - cassandra_data:/var/lib/cassandra
-    environment:
-      - CASSANDRA_CLUSTER_NAME=ImageSocialCluster
-      - CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
-      - CASSANDRA_DC=datacenter1
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-volumes:
-  cassandra_data:
+# Copy requirements and install Python dependencies
+COPY frontend-requirements.txt .
+RUN pip install --no-cache-dir -r frontend-requirements.txt
+
+# Copy application code
+COPY . .
+
+# Run the Streamlit app
+CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
 ```
 
-### Schema Definition
-```sql
--- Keyspace creation
-CREATE KEYSPACE IF NOT EXISTS social_images 
-WITH replication = {
-    'class': 'NetworkTopologyStrategy',
-    'datacenter1': 3
-};
+### Bare Metal Deployment
 
--- User uploads table
-CREATE TABLE social_images.user_uploads (
-    user_id uuid,
-    upload_id uuid,
-    upload_timestamp timestamp,
-    image_path text,
-    metadata map<text, text>,
-    PRIMARY KEY ((user_id), upload_timestamp, upload_id)
-) WITH CLUSTERING ORDER BY (upload_timestamp DESC);
+For bare metal deployments, use a process manager like systemd:
 
--- Image metadata table
-CREATE TABLE social_images.image_metadata (
-    image_id uuid,
-    user_id uuid,
-    upload_timestamp timestamp,
-    image_path text,
-    feature_vector_id uuid,
-    tags set<text>,
-    metadata map<text, text>,
-    PRIMARY KEY (image_id)
-);
+**systemd service file for API (similarity-search-api.service)**:
+```ini
+[Unit]
+Description=STRV Similarity Search API
+After=network.target
 
--- User interactions table
-CREATE TABLE social_images.user_interactions (
-    user_id uuid,
-    interaction_date date,
-    interaction_timestamp timestamp,
-    image_id uuid,
-    interaction_type text,
-    PRIMARY KEY ((user_id, interaction_date), interaction_timestamp, image_id)
-) WITH CLUSTERING ORDER BY (interaction_timestamp DESC);
+[Service]
+User=similarity
+WorkingDirectory=/opt/similarity-search
+ExecStart=/opt/similarity-search/env/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+Restart=on-failure
+Environment=PATH=/opt/similarity-search/env/bin
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-### Python Implementation
-```python
-from cassandra.cluster import Cluster
-from cassandra.query import BatchStatement
-from datetime import datetime
-import uuid
+**systemd service file for Frontend (similarity-search-frontend.service)**:
+```ini
+[Unit]
+Description=STRV Similarity Search Frontend
+After=network.target similarity-search-api.service
 
-class CassandraClient:
-    def __init__(self, contact_points=['localhost'], port=9042):
-        self.cluster = Cluster(contact_points, port=port)
-        self.session = self.cluster.connect('social_images')
-        self.prepare_statements()
+[Service]
+User=similarity
+WorkingDirectory=/opt/similarity-search
+ExecStart=/opt/similarity-search/env/bin/streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+Restart=on-failure
+Environment=PATH=/opt/similarity-search/env/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=API_URL=http://localhost:8000
 
-    def prepare_statements(self):
-        self.insert_upload = self.session.prepare("""
-            INSERT INTO user_uploads 
-            (user_id, upload_id, upload_timestamp, image_path, metadata)
-            VALUES (?, ?, ?, ?, ?)
-        """)
-        
-        self.insert_metadata = self.session.prepare("""
-            INSERT INTO image_metadata 
-            (image_id, user_id, upload_timestamp, image_path, feature_vector_id, tags, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """)
-
-    def save_upload(self, user_id, image_path, metadata, tags):
-        upload_id = uuid.uuid4()
-        feature_vector_id = uuid.uuid4()
-        timestamp = datetime.utcnow()
-
-        batch = BatchStatement()
-        batch.add(self.insert_upload, 
-                 (user_id, upload_id, timestamp, image_path, metadata))
-        batch.add(self.insert_metadata,
-                 (upload_id, user_id, timestamp, image_path, feature_vector_id, tags, metadata))
-        
-        self.session.execute(batch)
-        return upload_id, feature_vector_id
+[Install]
+WantedBy=multi-user.target
 ```
 
-## 3. Redis Cache Implementation
+## Storage Configuration
 
-### Setup
-```yaml
-# docker-compose.redis.yml
-version: '3'
+### Feature Database Management
 
-services:
-  redis:
-    image: redis:latest
-    command: redis-server --save 20 1 --loglevel warning
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
+The features.h5 file is critical for system performance. Recommendations:
 
-volumes:
-  redis_data:
-```
+1. **Storage Location**: Store on the fastest available storage
+2. **Backup Strategy**: Create regular backups of the H5 file
+3. **File System**: Use a file system that handles large files efficiently (ext4, XFS)
+4. **Permissions**: Ensure the application has read permissions
 
-### Python Implementation
-```python
-import redis
-from typing import List, Dict
-import json
+### Image Storage
 
-class RedisCache:
-    def __init__(self, host='localhost', port=6379, db=0):
-        self.redis_client = redis.Redis(host=host, port=port, db=db)
+Options for storing the actual images:
 
-    def cache_similar_images(self, query_id: str, similar_images: List[Dict],
-                           expire_time: int = 3600):
-        """Cache similar images results"""
-        self.redis_client.setex(
-            f"similar:{query_id}",
-            expire_time,
-            json.dumps(similar_images)
-        )
+1. **Local Storage**: Store images on local disk (simplest approach)
+2. **NFS/Shared Storage**: Store on network-attached storage for multi-server setups
+3. **Object Storage**: Use S3-compatible storage for cloud deployments
 
-    def get_cached_similar_images(self, query_id: str) -> List[Dict]:
-        """Retrieve cached similar images"""
-        cached = self.redis_client.get(f"similar:{query_id}")
-        return json.loads(cached) if cached else None
+## Performance Optimization
 
-    def cache_user_feed(self, user_id: str, feed_items: List[Dict],
-                       expire_time: int = 300):
-        """Cache user feed"""
-        self.redis_client.setex(
-            f"feed:{user_id}",
-            expire_time,
-            json.dumps(feed_items)
-        )
-```
+### FAISS Optimization
 
-## 4. Integration Example
+If using FAISS for search acceleration:
 
-```python
-class StorageManager:
-    def __init__(self):
-        self.milvus_client = MilvusClient()
-        self.cassandra_client = CassandraClient()
-        self.redis_cache = RedisCache()
+1. **Index Type Selection**:
+   - For datasets < 1M images: Use `IndexFlatIP` for exact search
+   - For larger datasets: Use `IndexIVFFlat` or `IndexIVFPQ` for approximate search
 
-    async def save_image(self, user_id: uuid.UUID, image_path: str,
-                        feature_vector: np.ndarray, metadata: Dict):
-        # 1. Save to Cassandra
-        upload_id, vector_id = self.cassandra_client.save_upload(
-            user_id, image_path, metadata, tags=set()
-        )
+2. **FAISS GPU Support**:
+   If GPU acceleration is needed, install the GPU version:
+   ```bash
+   pip install faiss-gpu
+   ```
 
-        # 2. Save feature vector to Milvus
-        self.milvus_client.insert_vectors([{
-            'id': vector_id,
-            'image_path': image_path,
-            'feature_vector': feature_vector
-        }])
+3. **Index Tuning**:
+   For `IndexIVF` variants, tune the number of clusters (nlist) based on dataset size:
+   - Small datasets (< 100K): nlist = sqrt(n)
+   - Medium datasets (100K-1M): nlist = 4 * sqrt(n)
+   - Large datasets (> 1M): nlist = 16 * sqrt(n)
 
-        return upload_id, vector_id
+### API Performance
 
-    async def find_similar_images(self, query_vector: np.ndarray,
-                                top_k: int = 10) -> List[Dict]:
-        # 1. Check cache
-        cache_key = str(hash(query_vector.tobytes()))
-        cached_results = self.redis_cache.get_cached_similar_images(cache_key)
-        
-        if cached_results:
-            return cached_results
+1. **Worker Configuration**:
+   - Set workers to CPU cores - 1 for optimal performance
+   - Example: On 8-core machine, use 7 workers
 
-        # 2. Search in Milvus
-        similar_vectors = self.milvus_client.search_vectors(
-            query_vector, top_k=top_k
-        )
+2. **Batch Size Tuning**:
+   Adjust batch sizes based on available memory:
+   - 8GB RAM: batch_size = 8
+   - 16GB RAM: batch_size = 16
+   - 32GB+ RAM: batch_size = 32
 
-        # 3. Get metadata from Cassandra
-        results = self.cassandra_client.get_images_metadata(
-            [v['id'] for v in similar_vectors]
-        )
+3. **Path Cache Optimization**:
+   Ensure path lookup table is properly cached to avoid filesystem lookups
 
-        # 4. Cache results
-        self.redis_cache.cache_similar_images(cache_key, results)
+## Scaling Strategies
 
-        return results
-```
+### Vertical Scaling
 
-## 5. Deployment Considerations
+Optimize the application for larger machines:
 
-### Hardware Requirements
-- Milvus: 
-  - 32GB+ RAM for millions of vectors
-  - SSD storage
-  - Multiple CPU cores
-- Cassandra:
-  - Minimum 3 nodes for reliability
-  - 16GB+ RAM per node
-  - Fast storage for write operations
-- Redis:
-  - 8GB+ RAM
-  - Optional persistence
+1. **Memory Optimization**:
+   - Increase batch sizes
+   - Enable path caching
+   - Tune Python garbage collection
 
-### Scaling Strategy
-1. **Horizontal Scaling**
-   - Milvus: Add more query nodes
-   - Cassandra: Add more nodes to the cluster
-   - Redis: Implement Redis Cluster
+2. **CPU Utilization**:
+   - Increase worker count
+   - Optimize thread allocation
 
-2. **Monitoring**
-   - Prometheus + Grafana for metrics
-   - Alert manager for system health
-   - Log aggregation (ELK Stack)
+3. **GPU Acceleration**:
+   - Enable CUDA/MPS for feature extraction
+   - Use FAISS-GPU for search acceleration
 
-3. **Backup Strategy**
-   - Regular Cassandra snapshots
-   - Milvus metadata backups
-   - Redis persistence configuration
+### Horizontal Scaling
+
+For very large deployments, consider:
+
+1. **Load Balancer + Multiple API Instances**:
+   - Deploy multiple API instances behind a load balancer
+   - Ensure all instances access the same feature database
+
+2. **Database Scaling**:
+   - Consider splitting the feature database into shards
+   - Use a distributed vector database like Milvus for very large datasets
+
+3. **Frontend Scaling**:
+   - Deploy multiple frontend instances
+   - Use sticky sessions if user state is important
+
+## Security Considerations
+
+1. **API Security**:
+   - Add proper authentication (OAuth, API keys)
+   - Rate limiting to prevent abuse
+   - Input validation for all endpoints
+
+2. **Network Security**:
+   - Use HTTPS with proper certificates
+   - Configure firewalls to restrict access
+   - Use a reverse proxy like Nginx
+
+3. **File Permissions**:
+   - Restrict access to the feature database
+   - Run services with minimal required permissions
+
+## Monitoring and Maintenance
+
+### Monitoring Setup
+
+1. **Log Collection**:
+   - Configure log rotation to prevent disk filling
+   - Set up log aggregation (ELK Stack, Graylog)
+
+2. **Performance Monitoring**:
+   - Set up Prometheus + Grafana for metrics
+   - Monitor key metrics:
+     - API response time
+     - Memory usage
+     - Search latency
+     - Feature extraction time
+
+3. **Alerts**:
+   - Configure alerts for:
+     - High error rates
+     - API unavailability
+     - Excessive resource usage
+
+### Maintenance Tasks
+
+1. **Regular Updates**:
+   - Update the feature database as new images are added
+   - Schedule updates during low-traffic periods
+
+2. **Backup Strategy**:
+   - Regular backups of the feature database
+   - Test restoration procedures
+
+3. **Performance Tuning**:
+   - Periodically review logs for performance bottlenecks
+   - Adjust configuration based on changing usage patterns
+
+## Example Deployment Checklist
+
+- [ ] Verify system requirements
+- [ ] Prepare features.h5 file with processed images
+- [ ] Configure environment variables
+- [ ] Set up Docker or systemd services
+- [ ] Configure networking and firewall
+- [ ] Implement monitoring and logging
+- [ ] Test all endpoints
+- [ ] Set up backup procedures
+- [ ] Document deployment details
+
+## Troubleshooting Common Issues
+
+### API Fails to Start
+
+**Symptoms**: The API service doesn't start or crashes immediately.
+
+**Potential Solutions**:
+1. Check logs for specific errors
+2. Verify the features.h5 file exists and is accessible
+3. Ensure all dependencies are installed
+4. Check port availability
+
+### Search Performance Issues
+
+**Symptoms**: Search operations are slow or time out.
+
+**Potential Solutions**:
+1. Enable FAISS for faster search
+2. Increase worker count
+3. Move features.h5 to faster storage
+4. Optimize batch sizes
+
+### Path Resolution Failures
+
+**Symptoms**: API returns errors about image paths not found.
+
+**Potential Solutions**:
+1. Check file permissions
+2. Verify image paths in the H5 file
+3. Ensure storage is properly mounted
+4. Use the ensure_valid_path function
+
+### Memory Usage Problems
+
+**Symptoms**: Services use excessive memory or crash with OOM errors.
+
+**Potential Solutions**:
+1. Reduce batch sizes
+2. Enable more aggressive garbage collection
+3. Upgrade to a machine with more RAM
+4. Use memory profiling to identify leaks
