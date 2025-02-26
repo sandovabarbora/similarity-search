@@ -1,28 +1,44 @@
+# Standard library imports
 import sys
 from pathlib import Path
-import numpy as np
-import h5py
-from tqdm import tqdm
 import argparse
 from datetime import datetime
 import time
-from typing import List, Dict, Any, Optional, Set, Tuple, Union
 import os
+import json
+import platform
+import gc
+from typing import List, Dict, Any, Optional, Set, Tuple, Union
+from dataclasses import dataclass
+
+# Scientific computing and data handling
+import numpy as np
+import h5py
 import psutil
+
+# Image and machine learning libraries
 import torch
 import torch.multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
-import gc
-from dataclasses import dataclass
 import torchvision.transforms as transforms
-import torchvision.models as models
+import torchvision.models as models  # Added this import
+from torchvision.models import ResNet50_Weights  # Added for type hints
 from PIL import Image
-from torch.utils.data import Dataset, DataLoader
+
+# Progress tracking
+from tqdm import tqdm
+
+# Temporary replacement for deprecated pkg_resources
+try:
+    import importlib.metadata as pkg_resources
+except ImportError:
+    import pkg_resources
 
 # Add project root to Python path
 project_root = str(Path(__file__).parent.parent)
 sys.path.append(project_root)
 
+# Project-specific imports
 from utils.logger import logger, Logger
 from utils.log_decorators import log_function_call
 
@@ -44,7 +60,177 @@ class ProcessingStats:
     def images_per_second(self) -> float:
         return self.processed_images / self.processing_time if self.processing_time > 0 else 0
 
-class ImageDataset(Dataset):
+class H5FileManager:
+    """Advanced H5 file management with append and update capabilities"""
+    def __init__(self, filename: str, mode: str = 'a'):
+        """
+        Initialize H5 file manager
+        
+        Args:
+            filename (str): Path to the H5 file
+            mode (str, optional): File open mode. Defaults to 'a' (read/write/create)
+        """
+        self.filename = filename
+        self.mode = mode
+
+    def append_features(self, features: np.ndarray, paths: List[str], metadata: Dict[str, Any] = None):
+        """
+        Append features to an existing H5 file or create a new one
+        
+        Args:
+            features (np.ndarray): Feature matrix to append
+            paths (List[str]): Corresponding image paths
+            metadata (Dict[str, Any], optional): Additional metadata to store
+        """
+        with h5py.File(self.filename, self.mode) as h5_file:
+            # Append features
+            if 'features' in h5_file:
+                # Existing features dataset
+                existing_features = h5_file['features']
+                existing_paths = h5_file['paths']
+                
+                # Resize and append
+                new_feature_shape = (existing_features.shape[0] + features.shape[0], features.shape[1])
+                existing_features.resize(new_feature_shape)
+                existing_features[-features.shape[0]:] = features
+                
+                # Append paths
+                existing_paths.resize((existing_paths.shape[0] + len(paths),))
+                existing_paths[-len(paths):] = paths
+            else:
+                # Create new datasets
+                chunk_size = min(1000, len(features))
+                h5_file.create_dataset(
+                    'features', 
+                    data=features, 
+                    chunks=(chunk_size, features.shape[1]),
+                    compression='gzip', 
+                    compression_opts=1,
+                    maxshape=(None, features.shape[1])
+                )
+                
+                # Create paths dataset with string variable length
+                dt = h5py.special_dtype(vlen=str)
+                h5_file.create_dataset(
+                    'paths', 
+                    data=paths, 
+                    dtype=dt,
+                    maxshape=(None,)
+                )
+            
+            # Update or create metadata
+            if metadata:
+                for key, value in metadata.items():
+                    h5_file.attrs[key] = value
+
+    def get_library_versions(self) -> Dict[str, str]:
+        """
+        Retrieve versions of key libraries
+        
+        Returns:
+            Dict[str, str]: Dictionary of library versions
+        """
+        libraries = [
+            'numpy', 'torch', 'torchvision', 'h5py', 
+            'tqdm', 'psutil', 'Pillow'
+        ]
+        
+        versions = {}
+        for lib in libraries:
+            try:
+                versions[lib] = pkg_resources.version(lib)
+            except Exception:
+                versions[lib] = 'Not found'
+        
+        return versions
+
+class FastDirectoryScanner:
+    """Optimized parallel directory scanner with configurable extensions"""
+    def __init__(self, extensions: Optional[Set[str]] = None):
+        """
+        Initialize scanner with configurable image extensions
+        
+        Args:
+            extensions (Optional[Set[str]]): Set of image extensions to scan. 
+                                            Defaults to common image formats if not provided.
+        """
+        self.extensions = extensions or {'jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp'}
+    
+    def parallel_scan(self, root_dir: Path, num_workers: int) -> List[Path]:
+        """
+        Parallel directory scanning with optimized memory usage and configurable extensions
+        
+        Args:
+            root_dir (Path): Root directory to scan
+            num_workers (int): Number of parallel workers
+        
+        Returns:
+            List[Path]: Sorted list of unique image paths
+        """
+        try:
+            # Get all subdirectories
+            logger.debug("Getting subdirectories")
+            subdirs = [root_dir] + [d for d in root_dir.rglob("*") if d.is_dir()]
+            
+            # Calculate optimal chunk size
+            chunk_size = max(100, len(subdirs) // (num_workers * 4))
+            chunks = [subdirs[i:i + chunk_size] 
+                     for i in range(0, len(subdirs), chunk_size)]
+            
+            logger.info(f"Starting parallel scan with {num_workers} workers")
+            logger.info(f"Scanning for extensions: {self.extensions}")
+            
+            all_images = []
+            
+            # Process in parallel using ProcessPoolExecutor
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                futures = []
+                for chunk in chunks:
+                    futures.append(executor.submit(self._scan_chunk, chunk, self.extensions))
+                
+                # Collect results with progress tracking
+                for future in tqdm(futures, desc="Scanning directories",
+                                 total=len(chunks), unit="chunk"):
+                    chunk_images = future.result()
+                    all_images.extend(chunk_images)
+                    
+                    # Periodic memory cleanup
+                    if len(all_images) % 10000 == 0:
+                        gc.collect()
+            
+            # Remove duplicates and sort
+            unique_images = sorted(set(str(p) for p in all_images))
+            return [Path(p) for p in unique_images]
+            
+        except Exception as e:
+            logger.exception("Error in parallel directory scan")
+            raise
+
+    @staticmethod
+    def _scan_chunk(chunk: List[Path], extensions: Set[str]) -> List[Path]:
+        """
+        Process a chunk of directories to find images
+        
+        Args:
+            chunk (List[Path]): List of directories to scan
+            extensions (Set[str]): Image file extensions to find
+        
+        Returns:
+            List[Path]: List of image file paths
+        """
+        images = []
+        for path in chunk:
+            try:
+                if path.is_dir():
+                    for ext in extensions:
+                        # Scan for both lowercase and uppercase extensions
+                        images.extend(path.glob(f"*.{ext.lower()}"))
+                        images.extend(path.glob(f"*.{ext.upper()}"))
+            except Exception as e:
+                logger.error(f"Error scanning directory {path}: {e}")
+        return images
+
+class ImageDataset(torch.utils.data.Dataset):
     """Dataset for parallel image loading with robust error handling"""
     def __init__(self, paths: List[Union[str, Path]], transform):
         self.paths = [Path(p) if isinstance(p, str) else p for p in paths]
@@ -152,15 +338,15 @@ class ImageFeatureExtractor:
         return features, batch_paths
 
     def batch_extract_features(self, 
-                             image_paths: List[Union[str, Path]], 
-                             batch_size: int = 64) -> Tuple[np.ndarray, List[str]]:
+                                image_paths: List[Union[str, Path]], 
+                                batch_size: int = 64) -> Tuple[np.ndarray, List[str]]:
         """Extract features using efficient parallel processing"""
         try:
             logger.info("Starting parallel feature extraction")
             
             # Initialize dataset and dataloader
             dataset = ImageDataset(image_paths, self.transform)
-            dataloader = DataLoader(
+            dataloader = torch.utils.data.DataLoader(
                 dataset,
                 batch_size=batch_size,
                 num_workers=self.num_workers,
@@ -174,8 +360,11 @@ class ImageFeatureExtractor:
             valid_paths = []
             total_batches = len(dataloader)
 
-            # Process batches with progress tracking
-            with tqdm(total=total_batches, desc="Extracting features") as pbar:
+            # Process batches with a single progress bar
+            with tqdm(total=total_batches, 
+                    desc="Extracting Features", 
+                    unit="batch", 
+                    bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]") as pbar:
                 for batch_tensors, batch_paths in dataloader:
                     if len(batch_tensors) > 0:
                         features, paths = self.process_batch(batch_tensors, batch_paths)
@@ -184,89 +373,30 @@ class ImageFeatureExtractor:
                             valid_paths.extend(paths)
 
                     pbar.update(1)
-                    
-                    # Log progress periodically
-                    if len(valid_paths) % (batch_size * 10) == 0:
-                        logger.info(
-                            f"Processed {len(valid_paths)}/{len(image_paths)} images"
-                        )
+                    pbar.set_postfix({
+                        'processed_images': len(valid_paths),
+                        'batch_size': len(batch_paths)
+                    })
 
-            if not all_features:
-                return np.array([]), []
+                if not all_features:
+                    return np.array([]), []
 
-            # Combine features
-            final_features = np.vstack(all_features)
-            
-            logger.info(
-                "Processing completed",
-                extra={
-                    'total_images': len(image_paths),
-                    'processed_images': len(valid_paths),
-                    'feature_shape': final_features.shape
-                }
-            )
-            
-            return final_features, valid_paths
-            
+                # Combine features
+                final_features = np.vstack(all_features)
+                
+                logger.info(
+                    "Processing completed",
+                    extra={
+                        'total_images': len(image_paths),
+                        'processed_images': len(valid_paths),
+                        'feature_shape': final_features.shape
+                    }
+                )
+                
+                return final_features, valid_paths
+                
         except Exception as e:
             logger.exception("Error during batch processing")
-            raise
-
-def scan_chunk(chunk: List[Path], extensions: Set[str]) -> List[Path]:
-    """Process a chunk of directories to find images"""
-    images = []
-    for path in chunk:
-        try:
-            if path.is_dir():
-                for ext in extensions:
-                    images.extend(path.glob(f"*.{ext.lower()}"))
-                    images.extend(path.glob(f"*.{ext.upper()}"))
-        except Exception as e:
-            logger.error(f"Error scanning directory {path}: {e}")
-    return images
-
-class FastDirectoryScanner:
-    """Optimized parallel directory scanner"""
-    def __init__(self, extensions: Set[str]):
-        self.extensions = extensions
-    
-    def parallel_scan(self, root_dir: Path, num_workers: int) -> List[Path]:
-        """Parallel directory scanning with optimized memory usage"""
-        try:
-            # Get all subdirectories
-            logger.debug("Getting subdirectories")
-            subdirs = [root_dir] + [d for d in root_dir.rglob("*") if d.is_dir()]
-            
-            # Calculate optimal chunk size
-            chunk_size = max(100, len(subdirs) // (num_workers * 4))
-            chunks = [subdirs[i:i + chunk_size] 
-                     for i in range(0, len(subdirs), chunk_size)]
-            
-            logger.info(f"Starting parallel scan with {num_workers} workers")
-            all_images = []
-            
-            # Process in parallel using ProcessPoolExecutor
-            with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                futures = []
-                for chunk in chunks:
-                    futures.append(executor.submit(scan_chunk, chunk, self.extensions))
-                
-                # Collect results with progress tracking
-                for future in tqdm(futures, desc="Scanning directories",
-                                 total=len(chunks), unit="chunk"):
-                    chunk_images = future.result()
-                    all_images.extend(chunk_images)
-                    
-                    # Periodic memory cleanup
-                    if len(all_images) % 10000 == 0:
-                        gc.collect()
-            
-            # Remove duplicates and sort
-            unique_images = sorted(set(str(p) for p in all_images))
-            return [Path(p) for p in unique_images]
-            
-        except Exception as e:
-            logger.exception("Error in parallel directory scan")
             raise
 
 def get_system_stats() -> Dict[str, float]:
@@ -279,72 +409,65 @@ def get_system_stats() -> Dict[str, float]:
         'num_threads': process.num_threads()
     }
 
-class H5Writer:
-    """Efficient H5 file writer"""
-    def __init__(self, filename: str):
-        self.filename = filename
-
-    def write(self, features: np.ndarray, paths: List[str], stats: ProcessingStats):
-        """Write features and metadata to H5 file"""
-        with h5py.File(self.filename, 'w') as h5_file:
-            # Write features with optimal chunk size
-            chunk_size = min(1000, len(features))
-            h5_file.create_dataset(
-                'features',
-                data=features,
-                chunks=(chunk_size, features.shape[1]),
-                compression='gzip',
-                compression_opts=1
-            )
-
-            # Write paths
-            dt = h5py.special_dtype(vlen=str)
-            paths_array = np.array(paths, dtype=dt)
-            h5_file.create_dataset('paths', data=paths_array)
-
-            # Write metadata
-            system_stats = get_system_stats()
-            metadata = {
-                'num_images': len(paths),
-                'feature_dim': features.shape[1],
-                'creation_time': str(datetime.now()),
-                'processing_time': stats.processing_time,
-                'success_rate': stats.success_rate,
-                'images_per_second': stats.images_per_second,
-                'memory_usage_gb': system_stats['memory_gb'],
-                'cpu_percent': system_stats['cpu_percent']
-            }
-            
-            for key, value in metadata.items():
-                h5_file.attrs[key] = value
-
-@log_function_call
 def process_image_dataset(
     input_dir: str,
     output_file: str,
     batch_size: int = 32,
-    num_workers: Optional[int] = None
-) -> ProcessingStats:
-    """Process image dataset with optimized performance for M2"""
+    num_workers: Optional[int] = None,
+    image_extensions: Optional[Set[str]] = None,
+    append: bool = False
+) -> Dict[str, Any]:
+    """
+    Process image dataset with advanced file management and configuration
+    
+    Args:
+        input_dir (str): Input directory containing images
+        output_file (str): Output H5 file path
+        batch_size (int, optional): Batch size for processing. Defaults to 32.
+        num_workers (Optional[int], optional): Number of worker threads. Defaults to None.
+        image_extensions (Optional[Set[str]], optional): Image file extensions to process. Defaults to None.
+        append (bool, optional): Whether to append to existing file. Defaults to False.
+    
+    Returns:
+        Dict[str, Any]: Processing statistics and metadata
+    """
+    # Initial setup
     stats = ProcessingStats()
     start_time = time.time()
+    h5_manager = H5FileManager(output_file, mode='a' if append else 'w')
     
     try:
         logger.info(f"Processing images from {input_dir}")
         input_path = Path(input_dir)
         
+        # Check existing paths if appending
+        existing_paths = set()
+        if append and os.path.exists(output_file):
+            with h5py.File(output_file, 'r') as h5_file:
+                if 'paths' in h5_file:
+                    existing_paths = set(h5_file['paths'][:])
+                    logger.info(f"Found {len(existing_paths)} existing images in the feature file")
+        
         # Scan for images using parallel processing
-        scanner = FastDirectoryScanner({'jpg', 'jpeg', 'png'})
+        scanner = FastDirectoryScanner(image_extensions)
         num_workers = num_workers or min(os.cpu_count() or 1, 8)
         
         logger.info("Scanning for images...")
         image_paths = scanner.parallel_scan(input_path, num_workers)
         stats.total_images = len(image_paths)
         
-        if stats.total_images == 0:
-            raise ValueError(f"No images found in {input_dir}")
+        # Filter out already processed images
+        new_image_paths = [path for path in image_paths if str(path) not in existing_paths]
         
-        logger.info(f"Found {stats.total_images} images")
+        if not new_image_paths:
+            logger.info("No new images to process.")
+            return {}
+        
+        logger.info(f"Found {stats.total_images} total images")
+        logger.info(f"Found {len(new_image_paths)} new images to process")
+        
+        # Update total images to new images count
+        stats.total_images = len(new_image_paths)
         
         # Initialize feature extractor
         extractor = ImageFeatureExtractor(num_workers=num_workers)
@@ -352,7 +475,7 @@ def process_image_dataset(
         # Extract features
         logger.info("Extracting features...")
         features, valid_paths = extractor.batch_extract_features(
-            image_paths,
+            new_image_paths,
             batch_size=batch_size
         )
         
@@ -362,10 +485,32 @@ def process_image_dataset(
         if stats.processed_images == 0:
             raise ValueError("Feature extraction failed for all images")
         
-        # Save results
-        logger.info(f"Saving features to {output_file}")
-        writer = H5Writer(output_file)
-        writer.write(features, valid_paths, stats)
+        # Prepare comprehensive metadata
+        system_stats = get_system_stats()
+        metadata = {
+            'total_images_scanned': len(image_paths),
+            'new_images_processed': len(valid_paths),
+            'existing_images': len(existing_paths),
+            'num_images': len(valid_paths),
+            'feature_dim': features.shape[1],
+            'creation_time': str(datetime.now()),
+            'processing_time': time.time() - start_time,
+            'success_rate': stats.success_rate,
+            'images_per_second': stats.images_per_second,
+            'memory_usage_gb': system_stats['memory_gb'],
+            'cpu_percent': system_stats['cpu_percent'],
+            'system_info': {
+                'python_version': platform.python_version(),
+                'platform': platform.platform(),
+                'library_versions': h5_manager.get_library_versions()
+            },
+            'input_directory': str(input_path),
+            'command_line_args': sys.argv
+        }
+        
+        # Save results with advanced metadata
+        logger.info(f"{'Appending' if append else 'Saving'} {len(valid_paths)} new features to {output_file}")
+        h5_manager.append_features(features, valid_paths, metadata)
         
         # Calculate final statistics
         stats.processing_time = time.time() - start_time
@@ -376,6 +521,8 @@ def process_image_dataset(
         logger.info(
             "Processing completed",
             extra={
+                'total_images_scanned': len(image_paths),
+                'new_images_processed': len(valid_paths),
                 'total_time': f"{stats.processing_time:.2f}s",
                 'images_per_second': f"{stats.images_per_second:.2f}",
                 'success_rate': f"{stats.success_rate:.2f}%",
@@ -384,7 +531,7 @@ def process_image_dataset(
             }
         )
         
-        return stats
+        return metadata
         
     except Exception as e:
         logger.exception(f"Error processing dataset: {str(e)}")
@@ -396,9 +543,9 @@ def process_image_dataset(
             torch.cuda.empty_cache()
 
 def main():
-    """Main entry point with argument parsing"""
+    """Main entry point with enhanced argument parsing"""
     parser = argparse.ArgumentParser(
-        description='Process image dataset with optimized performance for M2',
+        description='Advanced Image Feature Extraction with Flexible Configuration',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument('--input_dir', type=str, required=True,
@@ -410,8 +557,11 @@ def main():
     parser.add_argument('--num_workers', type=int,
                       default=min(8, os.cpu_count() or 1),
                       help='Number of worker threads')
-    parser.add_argument('--overwrite', action='store_true',
-                      help='Overwrite output file if it exists')
+    parser.add_argument('--extensions', type=str, nargs='+',
+                      default=['jpg', 'jpeg', 'png'],
+                      help='Image file extensions to process')
+    parser.add_argument('--append', action='store_true',
+                      help='Append to existing H5 file instead of overwriting')
     
     args = parser.parse_args()
     
@@ -422,29 +572,20 @@ def main():
             raise ValueError(f"Directory not found: {args.input_dir}")
             
         output_file = Path(args.output_file)
-        if output_file.exists() and not args.overwrite:
-            raise ValueError(f"Output file exists: {args.output_file}. Use --overwrite to force.")
-        
         output_file.parent.mkdir(parents=True, exist_ok=True)
         
         # Process dataset
-        stats = process_image_dataset(
+        metadata = process_image_dataset(
             args.input_dir,
             args.output_file,
             args.batch_size,
-            args.num_workers
+            args.num_workers,
+            set(args.extensions),
+            args.append
         )
         
-        logger.info(
-            "Script completed successfully",
-            extra={
-                'processed_images': stats.processed_images,
-                'failed_images': stats.failed_images,
-                'success_rate': f"{stats.success_rate:.2f}%",
-                'processing_time': f"{stats.processing_time:.2f}s",
-                'images_per_second': f"{stats.images_per_second:.2f}"
-            }
-        )
+        # Print metadata for user reference
+        print(json.dumps(metadata, indent=2))
         
     except Exception as e:
         logger.exception(f"Script execution failed: {str(e)}")
