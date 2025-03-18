@@ -1,7 +1,6 @@
-# STRV Similarity Search
+# Similarity Search
 
-## Project Overview
-STRV Similarity Search is a visual intelligence platform that uses deep learning to find visually similar images within a dataset. The system extracts feature vectors from images using a ResNet50 model and enables efficient similarity search.
+## Project Overview Similarity Search is a visual intelligence platform that uses deep learning to find visually similar images within a dataset. The system extracts feature vectors from images using a ResNet50 model and enables efficient similarity search.
 
 ## System Architecture
 
@@ -29,8 +28,8 @@ STRV Similarity Search is a visual intelligence platform that uses deep learning
 ### Environment Setup
 ```bash
 # Clone the repository
-git clone https://github.com/organization/strv-similarity-search  
-cd strv-similarity-search
+git clone https://github.com/organization/similarity-search  
+cd similarity-search
 
 # Create a virtual environment 
 make setup
