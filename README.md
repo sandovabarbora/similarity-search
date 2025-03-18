@@ -1,6 +1,7 @@
 # Similarity Search
 
-## Project Overview Similarity Search is a visual intelligence platform that uses deep learning to find visually similar images within a dataset. The system extracts feature vectors from images using a ResNet50 model and enables efficient similarity search.
+## Project Overview 
+Similarity Search is a visual intelligence platform that uses deep learning to find visually similar images within a dataset. The system extracts feature vectors from images using a ResNet50 model and enables efficient similarity search.
 
 ## System Architecture
 
